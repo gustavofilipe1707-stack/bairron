@@ -1,0 +1,1520 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>BairroOn</title>
+<link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+
+<!-- ═══════════════════════════════════════
+  FIREBASE — cole sua config aqui
+  console.firebase.google.com
+════════════════════════════════════════ -->
+<script type="module">
+import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-app.js";
+import { getAuth, signInWithPopup, GoogleAuthProvider, signOut, onAuthStateChanged }
+  from "https://www.gstatic.com/firebasejs/10.12.0/firebase-auth.js";
+import { getFirestore, collection, doc, addDoc, getDoc, getDocs, setDoc,
+  updateDoc, deleteDoc, query, where, orderBy, onSnapshot, serverTimestamp, increment, limit }
+  from "https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js";
+
+const firebaseConfig = {
+  apiKey:            "AIzaSyA4T2wA4-XWrGWQCoXd1v_4qM6KeR_D5Wg",
+  authDomain:        "bairron-713ce.firebaseapp.com",
+  projectId:         "bairron-713ce",
+  storageBucket:     "bairron-713ce.firebasestorage.app",
+  messagingSenderId: "1005754836387",
+  appId:             "1:1005754836387:web:268022ff7a65179454e616"
+};
+const ADMIN_EMAILS = ["SEU_EMAIL@gmail.com"]; // ← coloque seu Gmail aqui
+// ─────────────────────────────────────────────
+
+const app  = initializeApp(firebaseConfig);
+const auth = getAuth(app);
+const db   = getFirestore(app);
+const provider = new GoogleAuthProvider();
+
+// ── ESTADO ────────────────────────────────────
+let currentUser   = null;
+let myLoja        = null;
+let isAdmin       = false;
+let unsubPortal   = null;
+
+// ── AUTH ──────────────────────────────────────
+window.doLogin  = () => signInWithPopup(auth, provider).catch(e => toast(e.message,'err'));
+window.doLogout = async () => { await signOut(auth); go('home'); };
+
+onAuthStateChanged(auth, async u => {
+  currentUser = u;
+  isAdmin     = u ? ADMIN_EMAILS.includes(u.email) : false;
+  myLoja      = null;
+  if (u) {
+    const s = await getDocs(query(collection(db,'lojas'), where('uid','==',u.uid)));
+    if (!s.empty) myLoja = { id: s.docs[0].id, ...s.docs[0].data() };
+  }
+  render();
+});
+
+// ── ROUTER ────────────────────────────────────
+const go = r => { location.hash = r; };
+const route = () => location.hash.slice(1) || 'home';
+window.addEventListener('hashchange', render);
+
+function render() {
+  const r = route();
+  if (r.startsWith('vitrine')) { renderVitrinePage(r.split('/')[1]||''); return; }
+  const pages = {
+    home:      pgHome,
+    explorar:  pgExplorar,
+    painel:    pgPainel,
+    cadastro:  pgCadastro,
+    admin:     pgAdmin,
+  };
+  const fn = pages[r] || pgHome;
+  document.getElementById('root').innerHTML = shell(fn());
+  hydrate(r);
+}
+
+// ── SHELL (nav + conteúdo) ────────────────────
+function shell(content) {
+  return `
+  <nav class="nav">
+    <a href="#home" class="logo">bairro<span>on</span></a>
+    <div class="nav-links">
+      <a href="#home"     class="nl ${route()==='home'?'act':''}">Início</a>
+      <a href="#explorar" class="nl ${route()==='explorar'?'act':''}">Explorar</a>
+      ${currentUser ? `<a href="#painel" class="nl ${route()==='painel'?'act':''}">Minha loja</a>` : ''}
+      ${isAdmin     ? `<a href="#admin"  class="nl ${route()==='admin'?'act':''}">Admin</a>` : ''}
+    </div>
+    <div class="nav-right">
+      ${currentUser
+        ? `<img src="${currentUser.photoURL||''}" class="nav-avatar" onerror="this.style.display='none'">
+           <span class="nav-name">${currentUser.displayName.split(' ')[0]}</span>
+           <button class="btn-out" onclick="doLogout()">Sair</button>`
+        : `<button class="btn-login" onclick="doLogin()">
+             <svg width="16" height="16" viewBox="0 0 24 24" fill="none"><path d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z" fill="#4285F4"/><path d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z" fill="#34A853"/><path d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.07H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.93l3.66-2.84z" fill="#FBBC05"/><path d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.07l3.66 2.84c.87-2.6 3.3-4.53 6.16-4.53z" fill="#EA4335"/></svg>
+             Entrar com Google
+           </button>`
+      }
+    </div>
+  </nav>
+  <div class="page">${content}</div>
+  <div id="toasts"></div>`;
+}
+
+// ══════════════════════════════════════════════
+//  HOME
+// ══════════════════════════════════════════════
+function pgHome() {
+  return `
+  <div class="home-hero">
+    <div class="hero-pill">📍 Guia digital de bairro</div>
+    <h1>Seu bairro na<br><em>palma da mão</em> 🤝</h1>
+    <p>Encontre comércios, promoções e serviços pertinho de você. Avalie, compartilhe e apoie o comércio local.</p>
+    <div class="hero-btns">
+      <button class="btn-green" onclick="go('explorar')">Explorar o bairro</button>
+      <button class="btn-white" onclick="${currentUser ? "go('cadastro')" : 'doLogin()'}">Cadastrar minha loja</button>
+    </div>
+  </div>
+
+  <div class="home-cats">
+    <h2 class="sec-title">O que você procura?</h2>
+    <div class="cats-grid">
+      ${[
+        {cat:'alimentacao', emoji:'🍕', label:'Alimentação', cor:'#FFF3E0'},
+        {cat:'servicos',    emoji:'🔧', label:'Serviços',    cor:'#E3F2FD'},
+        {cat:'varejo',      emoji:'🛍️', label:'Varejo',      cor:'#F3E5F5'},
+        {cat:'saude',       emoji:'💊', label:'Saúde',       cor:'#E8F5E9'},
+        {cat:'beleza',      emoji:'💇', label:'Beleza',      cor:'#FCE4EC'},
+        {cat:'educacao',    emoji:'📚', label:'Educação',    cor:'#E8EAF6'},
+      ].map(c => `
+        <div class="cat-card" style="background:${c.cor}" onclick="filtrarCat('${c.cat}')">
+          <span class="cat-emoji">${c.emoji}</span>
+          <span class="cat-label">${c.label}</span>
+        </div>
+      `).join('')}
+    </div>
+  </div>
+
+  <div class="home-feed" id="home-feed">
+    <h2 class="sec-title">Promoções em destaque 🔥</h2>
+    <div class="feed-grid" id="feed-promos">
+      ${[1,2,3].map(() => skeletonCard()).join('')}
+    </div>
+  </div>
+
+  <div class="home-feed" id="home-lojas-section">
+    <h2 class="sec-title">Lojas do bairro ⭐</h2>
+    <div class="lojas-grid" id="home-lojas">
+      ${[1,2,3,4,5,6].map(() => skeletonStore()).join('')}
+    </div>
+    <div style="text-align:center;margin-top:24px">
+      <button class="btn-green-outline" onclick="go('explorar')">Ver todas as lojas →</button>
+    </div>
+  </div>
+
+  <div class="cta-banner">
+    <div class="cta-text">
+      <h2>Seu comércio ainda não está aqui? 👋</h2>
+      <p>Cadastre grátis ou assine por <strong>R$ 39,90/mês</strong> e apareça nas telas do bairro.</p>
+    </div>
+    <button class="btn-green" onclick="${currentUser ? "go('cadastro')" : 'doLogin()'}">Quero cadastrar</button>
+  </div>`;
+}
+
+window.filtrarCat = cat => { go('explorar'); setTimeout(() => { setExploreCat(cat); }, 200); };
+
+function skeletonCard() {
+  return `<div class="skel-card"><div class="skel-img"></div><div class="skel-line w70"></div><div class="skel-line w50"></div></div>`;
+}
+function skeletonStore() {
+  return `<div class="skel-store"><div class="skel-avatar"></div><div style="flex:1"><div class="skel-line w70"></div><div class="skel-line w40"></div></div></div>`;
+}
+
+async function loadHome() {
+  const q1 = query(collection(db,'lojas'), where('ativo','==',true), where('aprovado','==',true));
+  onSnapshot(q1, snap => {
+    const lojas = snap.docs.map(d => ({ id: d.id, ...d.data() }));
+
+    // promos
+    const comPromo = lojas.filter(l => l.promo && l.plano !== 'basico').slice(0,6);
+    const feedEl = document.getElementById('feed-promos');
+    if (feedEl) feedEl.innerHTML = comPromo.length
+      ? comPromo.map(l => promoCard(l)).join('')
+      : '<p style="color:#999;grid-column:1/-1;text-align:center;padding:20px">Nenhuma promoção ativa no momento.</p>';
+
+    // lojas destaque
+    const sorted = [...lojas].sort((a,b) => (b.rating||0)-(a.rating||0)).slice(0,6);
+    const lojasEl = document.getElementById('home-lojas');
+    if (lojasEl) {
+      lojasEl.innerHTML = sorted.map(l => storeRow(l)).join('');
+      lojasEl.querySelectorAll('.store-row').forEach(el =>
+        el.addEventListener('click', () => openLoja(el.dataset.id)));
+    }
+  });
+}
+
+// ══════════════════════════════════════════════
+//  EXPLORAR
+// ══════════════════════════════════════════════
+let exploreCat = '';
+function setExploreCat(cat) {
+  exploreCat = cat;
+  document.querySelectorAll('.exp-cat').forEach(b => b.classList.toggle('active', b.dataset.cat === cat));
+  filterExplorar();
+}
+window.setExploreCat = setExploreCat;
+
+function pgExplorar() {
+  return `
+  <div class="exp-wrap">
+    <div class="exp-top">
+      <div class="exp-search-wrap">
+        <span class="search-icon">🔍</span>
+        <input class="exp-search" id="expSearch" placeholder="Buscar loja ou serviço..." oninput="filterExplorar()">
+      </div>
+      <select class="exp-sel" id="expBairro" onchange="filterExplorar()">
+        <option value="">Todos os bairros</option>
+      </select>
+      <select class="exp-sel" id="expStars" onchange="filterExplorar()">
+        <option value="">Qualquer nota</option>
+        <option value="4">4+ ⭐</option>
+        <option value="3">3+ ⭐</option>
+      </select>
+      <label class="exp-check">
+        <input type="checkbox" id="expPromo" onchange="filterExplorar()"> Só promoções
+      </label>
+    </div>
+
+    <div class="cat-pills-row" id="expCatRow">
+      <button class="exp-cat active" data-cat="" onclick="setExploreCat('')">Todos</button>
+      ${[
+        {v:'alimentacao',l:'🍕 Alimentação'},
+        {v:'servicos',   l:'🔧 Serviços'},
+        {v:'varejo',     l:'🛍️ Varejo'},
+        {v:'saude',      l:'💊 Saúde'},
+        {v:'beleza',     l:'💇 Beleza'},
+        {v:'educacao',   l:'📚 Educação'},
+      ].map(c => `<button class="exp-cat" data-cat="${c.v}" onclick="setExploreCat('${c.v}')">${c.l}</button>`).join('')}
+    </div>
+
+    <div id="exp-count" class="exp-count"></div>
+
+    <div class="exp-layout">
+      <div class="exp-grid" id="exp-grid">
+        ${[1,2,3,4,5,6,7,8].map(() => skeletonCard()).join('')}
+      </div>
+    </div>
+  </div>`;
+}
+
+let allLojasExp = [];
+
+async function loadExplorar() {
+  if (unsubPortal) unsubPortal();
+  const q = query(collection(db,'lojas'), where('ativo','==',true), where('aprovado','==',true));
+  unsubPortal = onSnapshot(q, snap => {
+    allLojasExp = snap.docs.map(d => ({ id: d.id, ...d.data() }));
+    populateBairros('expBairro', allLojasExp);
+    filterExplorar();
+  });
+}
+
+window.filterExplorar = function() {
+  const q     = (document.getElementById('expSearch')?.value||'').toLowerCase();
+  const bairro= document.getElementById('expBairro')?.value||'';
+  const stars = parseFloat(document.getElementById('expStars')?.value)||0;
+  const promo = document.getElementById('expPromo')?.checked;
+
+  const filtered = allLojasExp.filter(l => {
+    if (exploreCat && l.categoria !== exploreCat) return false;
+    if (bairro && l.bairro !== bairro) return false;
+    if (stars && (l.rating||0) < stars) return false;
+    if (promo && !l.promo) return false;
+    if (q && !`${l.nome}${l.bairro}${l.descricao||''}`.toLowerCase().includes(q)) return false;
+    return true;
+  });
+
+  const cnt = document.getElementById('exp-count');
+  if (cnt) cnt.textContent = `${filtered.length} estabelecimento${filtered.length!==1?'s':''} encontrado${filtered.length!==1?'s':''}`;
+
+  const grid = document.getElementById('exp-grid');
+  if (!grid) return;
+  grid.innerHTML = filtered.length
+    ? filtered.map(l => bigCard(l)).join('')
+    : `<div class="empty-exp">😅 Nenhuma loja encontrada.<br><small>Tente outros filtros.</small></div>`;
+
+  grid.querySelectorAll('.big-card').forEach(c =>
+    c.addEventListener('click', () => openLoja(c.dataset.id)));
+};
+
+function populateBairros(elId, lojas) {
+  const sel = document.getElementById(elId);
+  if (!sel) return;
+  const bairros = [...new Set(lojas.map(l=>l.bairro).filter(Boolean))].sort();
+  const v = sel.value;
+  sel.innerHTML = `<option value="">Todos os bairros</option>` +
+    bairros.map(b => `<option ${b===v?'selected':''} value="${b}">${b}</option>`).join('');
+}
+
+// ── CARDS ────────────────────────────────────
+const CAT_COLORS = {
+  alimentacao:'#FFF3E0', servicos:'#E3F2FD', varejo:'#F3E5F5',
+  saude:'#E8F5E9', beleza:'#FCE4EC', educacao:'#E8EAF6'
+};
+const CAT_EMOJIS = {
+  alimentacao:'🍕', servicos:'🔧', varejo:'🛍️', saude:'💊', beleza:'💇', educacao:'📚'
+};
+
+function bigCard(l) {
+  const cor = CAT_COLORS[l.categoria] || '#F5F5F5';
+  const emoji = CAT_EMOJIS[l.categoria] || '🏪';
+  const stars = starStr(l.rating||0);
+  return `
+  <div class="big-card ${l.plano==='premium'?'featured':''}" data-id="${l.id}">
+    <div class="bc-cover" style="background:${cor}">
+      ${l.coverUrl ? `<img src="${l.coverUrl}" class="bc-cover-img">` : `<span class="bc-emoji">${emoji}</span>`}
+      ${l.promo ? `<div class="bc-promo-badge">🔥 Promoção</div>` : ''}
+      ${l.plano==='premium' ? `<div class="bc-dest-badge">⭐ Destaque</div>` : ''}
+    </div>
+    <div class="bc-body">
+      <div class="bc-cat-pill" style="background:${cor}">${catL(l.categoria)}</div>
+      <div class="bc-name">${l.nome}</div>
+      <div class="bc-addr">📍 ${l.bairro}${l.endereco?' · '+l.endereco:''}</div>
+      <div class="bc-stars">${stars} <span class="bc-rating">${(l.rating||0).toFixed(1)} (${l.totalAvaliacoes||0})</span></div>
+      ${l.promo ? `<div class="bc-promo-text">🏷️ ${l.promo}</div>` : ''}
+      <div class="bc-foot">
+        <span class="bc-status ${l.aberto?'open':'closed'}">${l.aberto?'✅ Aberto':'🔴 Fechado'}</span>
+        ${l.telefone ? `<span class="bc-tel">📞 ${l.telefone}</span>` : ''}
+      </div>
+    </div>
+  </div>`;
+}
+
+function promoCard(l) {
+  const cor = CAT_COLORS[l.categoria] || '#F5F5F5';
+  const emoji = CAT_EMOJIS[l.categoria] || '🏪';
+  return `
+  <div class="promo-card" data-id="${l.id}" onclick="openLoja('${l.id}')">
+    <div class="pc-cover" style="background:${cor}">
+      ${l.coverUrl ? `<img src="${l.coverUrl}" class="pc-cover-img">` : `<span style="font-size:40px">${emoji}</span>`}
+    </div>
+    <div class="pc-body">
+      <div class="pc-nome">${l.nome}</div>
+      <div class="pc-promo">🏷️ ${l.promo}</div>
+      <div class="pc-bairro">📍 ${l.bairro}</div>
+    </div>
+  </div>`;
+}
+
+function storeRow(l) {
+  const emoji = CAT_EMOJIS[l.categoria] || '🏪';
+  const cor = CAT_COLORS[l.categoria] || '#F5F5F5';
+  return `
+  <div class="store-row" data-id="${l.id}">
+    <div class="sr-avatar" style="background:${cor}">${l.coverUrl?`<img src="${l.coverUrl}" style="width:100%;height:100%;object-fit:cover;border-radius:50%">`:`<span style="font-size:22px">${emoji}</span>`}</div>
+    <div class="sr-info">
+      <div class="sr-name">${l.nome}</div>
+      <div class="sr-sub">${catL(l.categoria)} · ${l.bairro}</div>
+      <div class="sr-stars">${starStr(l.rating||0)} <span style="font-size:12px;color:#888">${(l.rating||0).toFixed(1)}</span></div>
+    </div>
+    ${l.promo ? `<span class="sr-promo-tag">🔥 Promo</span>` : ''}
+  </div>`;
+}
+
+// ── MODAL LOJA ───────────────────────────────
+window.openLoja = async function(id) {
+  const snap = await getDoc(doc(db,'lojas',id));
+  if (!snap.exists()) return;
+  const l = { id, ...snap.data() };
+  await updateDoc(doc(db,'lojas',id), { visualizacoes: increment(1) }).catch(()=>{});
+
+  const avSnap = await getDocs(query(collection(db,'avaliacoes'),
+    where('lojaId','==',id), orderBy('criadoEm','desc')));
+  const avs = avSnap.docs.map(d => ({ id: d.id, ...d.data() }));
+  const cor = CAT_COLORS[l.categoria]||'#F5F5F5';
+  const emoji = CAT_EMOJIS[l.categoria]||'🏪';
+
+  const m = document.createElement('div');
+  m.className = 'modal-over';
+  m.innerHTML = `
+  <div class="modal-box">
+    <button class="modal-close" onclick="this.closest('.modal-over').remove()">✕</button>
+    <div class="modal-cover" style="background:${cor}">
+      ${l.coverUrl ? `<img src="${l.coverUrl}" class="mc-img">` : `<span style="font-size:64px">${emoji}</span>`}
+    </div>
+    <div class="modal-body">
+      <div class="modal-cat-pill" style="background:${cor}">${catL(l.categoria)}</div>
+      <h2 class="modal-nome">${l.nome}</h2>
+      ${l.descricao?`<p class="modal-desc">${l.descricao}</p>`:''}
+
+      <div class="modal-chips">
+        <span class="chip">📍 ${l.bairro}${l.endereco?' · '+l.endereco:''}</span>
+        ${l.telefone?`<span class="chip">📞 ${l.telefone}</span>`:''}
+        ${l.horario?`<span class="chip">🕐 ${l.horario}</span>`:''}
+        <span class="chip ${l.aberto?'chip-green':'chip-gray'}">${l.aberto?'✅ Aberto agora':'🔴 Fechado'}</span>
+      </div>
+
+      <div class="modal-stars-row">
+        <span style="font-size:20px">${starStr(l.rating||0)}</span>
+        <span style="font-weight:700;font-size:18px">${(l.rating||0).toFixed(1)}</span>
+        <span style="color:#888;font-size:14px">${l.totalAvaliacoes||0} avaliações</span>
+      </div>
+
+      ${l.promo?`<div class="modal-promo-box">🏷️ <strong>Promoção:</strong> ${l.promo}</div>`:''}
+
+      <div class="modal-avs-title">O que dizem os clientes 💬</div>
+      <div id="modal-avs-list">
+        ${avs.length===0
+          ? `<p style="color:#999;font-size:14px">Nenhuma avaliação ainda. Seja o primeiro!</p>`
+          : avs.slice(0,5).map(a=>`
+            <div class="av-card">
+              <div class="av-top"><strong>${a.autor||'Anônimo'}</strong><span>${starStr(a.nota)}</span></div>
+              <p>${a.texto||''}</p>
+              ${a.resposta?`<div class="av-resp">💬 <em>Loja:</em> ${a.resposta}</div>`:''}
+            </div>`).join('')}
+      </div>
+
+      ${currentUser?`
+      <div class="av-form">
+        <div class="av-form-title">Deixar avaliação ✍️</div>
+        <div class="star-row" id="starRow" data-v="5">
+          ${[1,2,3,4,5].map(n=>`<span class="star-btn active" data-n="${n}" onclick="pickStar(${n})">★</span>`).join('')}
+        </div>
+        <textarea id="avTxt" placeholder="Conta como foi a experiência..." rows="3"></textarea>
+        <button class="btn-green" style="width:100%" onclick="submitAv('${id}')">Publicar avaliação</button>
+      </div>`:`
+      <div style="text-align:center;padding:16px;background:#f9f9f9;border-radius:12px;margin-top:16px">
+        <p style="color:#666;margin-bottom:10px">Entre para deixar sua avaliação 😊</p>
+        <button class="btn-green" onclick="doLogin()">Entrar com Google</button>
+      </div>`}
+    </div>
+  </div>`;
+  m.addEventListener('click', e => { if(e.target===m) m.remove(); });
+  document.body.appendChild(m);
+};
+
+window.pickStar = n => {
+  const row = document.getElementById('starRow');
+  if(!row) return;
+  row.dataset.v = n;
+  row.querySelectorAll('.star-btn').forEach(s=>s.classList.toggle('active',+s.dataset.n<=n));
+};
+
+window.submitAv = async id => {
+  if(!currentUser) return;
+  const nota  = +document.getElementById('starRow')?.dataset.v||5;
+  const texto = document.getElementById('avTxt')?.value.trim()||'';
+  const ja = await getDocs(query(collection(db,'avaliacoes'),
+    where('lojaId','==',id), where('uid','==',currentUser.uid)));
+  if(!ja.empty){ toast('Você já avaliou esta loja 😊','err'); return; }
+  await addDoc(collection(db,'avaliacoes'),{
+    lojaId:id, uid:currentUser.uid, autor:currentUser.displayName, nota, texto, criadoEm:serverTimestamp()
+  });
+  const all = await getDocs(query(collection(db,'avaliacoes'),where('lojaId','==',id)));
+  const notas = all.docs.map(d=>d.data().nota);
+  await updateDoc(doc(db,'lojas',id),{
+    rating: parseFloat((notas.reduce((a,b)=>a+b,0)/notas.length).toFixed(1)),
+    totalAvaliacoes: notas.length
+  });
+  toast('Avaliação publicada! 🎉','ok');
+  document.querySelector('.modal-over')?.remove();
+};
+
+// ══════════════════════════════════════════════
+//  CADASTRO
+// ══════════════════════════════════════════════
+function pgCadastro() {
+  if (!currentUser) return needLogin('cadastrar sua loja');
+  if (myLoja) return `<div class="page-msg">
+    <span style="font-size:48px">🎉</span>
+    <h2>Você já tem uma loja!</h2>
+    <p>Acesse o painel para gerenciar.</p>
+    <button class="btn-green" onclick="go('painel')">Ir para o painel</button>
+  </div>`;
+
+  return `
+  <div class="cad-wrap">
+    <div class="cad-header">
+      <h1>Cadastrar loja 🏪</h1>
+      <p>Preencha os dados do seu comércio. O plano básico é sempre grátis!</p>
+    </div>
+
+    <div class="cad-form">
+      <div class="fg"><label>Nome da loja *</label><input id="cNome" placeholder="Ex: Padaria Três Irmãos"></div>
+      <div class="fg-row">
+        <div class="fg"><label>Categoria *</label>
+          <select id="cCat">
+            <option value="">Selecione...</option>
+            <option value="alimentacao">🍕 Alimentação</option>
+            <option value="servicos">🔧 Serviços</option>
+            <option value="varejo">🛍️ Varejo</option>
+            <option value="saude">💊 Saúde</option>
+            <option value="beleza">💇 Beleza</option>
+            <option value="educacao">📚 Educação</option>
+          </select>
+        </div>
+        <div class="fg"><label>Bairro *</label><input id="cBairro" placeholder="Ex: Centro, Vila Mariana..."></div>
+      </div>
+      <div class="fg-row">
+        <div class="fg"><label>Endereço</label><input id="cEnd" placeholder="Rua e número"></div>
+        <div class="fg"><label>Telefone / WhatsApp</label><input id="cTel" placeholder="(11) 9 9999-9999"></div>
+      </div>
+      <div class="fg-row">
+        <div class="fg"><label>Horário</label><input id="cHor" placeholder="Seg–Sex 9h–18h"></div>
+        <div class="fg"><label>Site ou Instagram</label><input id="cSite" placeholder="@sualoja"></div>
+      </div>
+      <div class="fg"><label>Descrição</label>
+        <textarea id="cDesc" rows="3" placeholder="Fale sobre seu negócio, o que oferece, diferenciais..."></textarea>
+      </div>
+      <div class="fg"><label>URL da foto de capa</label>
+        <input id="cCover" placeholder="https://... (link de imagem)">
+        <small style="color:#888;font-size:12px">Dica: use uma foto do seu estabelecimento ou cardápio</small>
+      </div>
+      <div class="fg"><label>Promoção ativa (opcional)</label>
+        <input id="cPromo" placeholder="Ex: 10% de desconto na primeira compra">
+      </div>
+
+      <div class="plano-wrap">
+        <div class="plano-title">Escolha seu plano 👇</div>
+        <div class="plano-row">
+          <div class="plano-opt active" data-p="basico" onclick="selP('basico')">
+            <div class="po-name">Básico</div>
+            <div class="po-price">Grátis</div>
+            <div class="po-desc">Apareça no guia, receba avaliações</div>
+          </div>
+          <div class="plano-opt" data-p="vitrine" onclick="selP('vitrine')">
+            <div class="po-badge">🔥 Fundador</div>
+            <div class="po-name">Vitrine</div>
+            <div class="po-price">R$ 39,90<span>/mês</span></div>
+            <div class="po-desc">+ Promoções, vitrine TV e painel</div>
+          </div>
+          <div class="plano-opt" data-p="premium" onclick="selP('premium')">
+            <div class="po-name">Premium</div>
+            <div class="po-price">R$ 159<span>/mês</span></div>
+            <div class="po-desc">+ Posição prioritária e slot fixo TV</div>
+          </div>
+        </div>
+        <input type="hidden" id="planoSel" value="basico">
+      </div>
+
+      <button class="btn-green" id="btnCad" onclick="doCadastro()" style="width:100%;padding:14px;font-size:16px">
+        Cadastrar minha loja 🚀
+      </button>
+    </div>
+  </div>`;
+}
+
+window.selP = p => {
+  document.querySelectorAll('.plano-opt').forEach(o => o.classList.toggle('active', o.dataset.p===p));
+  document.getElementById('planoSel').value = p;
+};
+
+window.doCadastro = async () => {
+  const nome   = document.getElementById('cNome')?.value.trim();
+  const cat    = document.getElementById('cCat')?.value;
+  const bairro = document.getElementById('cBairro')?.value.trim();
+  if (!nome||!cat||!bairro) { toast('Preencha nome, categoria e bairro 👆','err'); return; }
+
+  const btn = document.getElementById('btnCad');
+  if (btn) { btn.textContent='Cadastrando...'; btn.disabled=true; }
+
+  try {
+    const data = {
+      uid: currentUser.uid,
+      nome, categoria:cat, bairro,
+      endereco: document.getElementById('cEnd')?.value.trim()||'',
+      telefone: document.getElementById('cTel')?.value.trim()||'',
+      horario:  document.getElementById('cHor')?.value.trim()||'',
+      site:     document.getElementById('cSite')?.value.trim()||'',
+      descricao:document.getElementById('cDesc')?.value.trim()||'',
+      coverUrl: document.getElementById('cCover')?.value.trim()||'',
+      promo:    document.getElementById('cPromo')?.value.trim()||'',
+      plano:    document.getElementById('planoSel')?.value||'basico',
+      aberto:true, rating:0, totalAvaliacoes:0, visualizacoes:0,
+      ativo:true, aprovado:false, criadoEm:serverTimestamp()
+    };
+    const ref = await addDoc(collection(db,'lojas'), data);
+    myLoja = { id:ref.id, ...data };
+    toast('Loja cadastrada! Aguardando aprovação 🎉','ok');
+    setTimeout(()=>go('painel'),1500);
+  } catch(e) {
+    toast('Erro: '+e.message,'err');
+    if(btn){btn.textContent='Cadastrar minha loja 🚀';btn.disabled=false;}
+  }
+};
+
+// ══════════════════════════════════════════════
+//  PAINEL DO LOJISTA
+// ══════════════════════════════════════════════
+function pgPainel() {
+  if (!currentUser) return needLogin('acessar seu painel');
+  if (!myLoja) return `<div class="page-msg">
+    <span style="font-size:48px">🏪</span>
+    <h2>Você ainda não tem uma loja</h2>
+    <p>Cadastre agora, é rápido!</p>
+    <button class="btn-green" onclick="go('cadastro')">Cadastrar minha loja</button>
+  </div>`;
+
+  const l = myLoja;
+  const cor = CAT_COLORS[l.categoria]||'#F5F5F5';
+  const emoji = CAT_EMOJIS[l.categoria]||'🏪';
+
+  return `
+  <div class="painel-wrap">
+    <div class="painel-profile">
+      <div class="pp-cover" style="background:${cor}">
+        ${l.coverUrl?`<img src="${l.coverUrl}" class="pp-cover-img">`:`<span style="font-size:52px">${emoji}</span>`}
+      </div>
+      <div class="pp-info">
+        <h2>${l.nome}</h2>
+        <div class="pp-meta">
+          <span class="chip" style="background:${cor}">${catL(l.categoria)}</span>
+          <span class="chip">📍 ${l.bairro}</span>
+          <span class="chip ${l.aprovado?'chip-green':'chip-orange'}">${l.aprovado?'✅ Aprovada':'⏳ Aguardando aprovação'}</span>
+          <span class="plano-chip plano-${l.plano}">${planoL(l.plano)}</span>
+        </div>
+        <div class="pp-toggle">
+          <span>Status:</span>
+          <button class="toggle-btn ${l.aberto?'tog-open':'tog-closed'}" id="togBtn" onclick="toggleAberto()">
+            ${l.aberto?'✅ Aberto agora':'🔴 Fechado — toque para abrir'}
+          </button>
+        </div>
+      </div>
+    </div>
+
+    <div class="p-tabs-row">
+      <button class="ptab active" data-t="dash"    onclick="setPT(this,'dash')">📊 Painel</button>
+      <button class="ptab"        data-t="promo"   onclick="setPT(this,'promo')">🏷️ Promoção</button>
+      <button class="ptab"        data-t="avs"     onclick="setPT(this,'avs')">💬 Avaliações</button>
+      <button class="ptab"        data-t="perfil"  onclick="setPT(this,'perfil')">✏️ Perfil</button>
+      ${l.plano!=='basico'?`<button class="ptab" data-t="vitrine" onclick="setPT(this,'vitrine')">📺 Vitrine TV</button>`:''}
+    </div>
+
+    <div id="pt-dash"    class="pt-c active">${painelDash(l)}</div>
+    <div id="pt-promo"   class="pt-c">${painelPromo(l)}</div>
+    <div id="pt-avs"     class="pt-c"><div id="avs-list">Carregando...</div></div>
+    <div id="pt-perfil"  class="pt-c">${painelPerfil(l)}</div>
+    ${l.plano!=='basico'?`<div id="pt-vitrine" class="pt-c">${painelVitrine(l)}</div>`:''}
+  </div>`;
+}
+
+function painelDash(l) {
+  return `
+  <div class="dash-metrics">
+    <div class="dm"><div class="dm-val">${(l.visualizacoes||0).toLocaleString('pt-BR')}</div><div class="dm-lbl">👁️ Visualizações</div></div>
+    <div class="dm"><div class="dm-val">${(l.rating||0).toFixed(1)} ★</div><div class="dm-lbl">⭐ Avaliação</div></div>
+    <div class="dm"><div class="dm-val">${l.totalAvaliacoes||0}</div><div class="dm-lbl">💬 Avaliações</div></div>
+    <div class="dm"><div class="dm-val">${l.promo?'Sim':'Não'}</div><div class="dm-lbl">🏷️ Promoção</div></div>
+  </div>
+  <div class="dash-status-card">
+    <h3>Resumo da loja</h3>
+    <div class="dsc-row"><span>Nome</span><strong>${l.nome}</strong></div>
+    <div class="dsc-row"><span>Bairro</span><strong>${l.bairro}</strong></div>
+    <div class="dsc-row"><span>Telefone</span><strong>${l.telefone||'—'}</strong></div>
+    <div class="dsc-row"><span>Horário</span><strong>${l.horario||'—'}</strong></div>
+    <div class="dsc-row"><span>Promoção</span><strong>${l.promo||'Nenhuma'}</strong></div>
+    <div class="dsc-row"><span>Plano</span><strong>${planoL(l.plano)}</strong></div>
+    ${l.plano==='basico'?`<div style="margin-top:16px;padding:14px;background:#FFF8E1;border-radius:12px;font-size:13px">
+      💡 <strong>Quer aparecer na vitrine TV?</strong> Assine o plano Vitrine por R$ 39,90/mês.
+      <br><button onclick="go('cadastro')" style="margin-top:8px;padding:6px 16px;border-radius:20px;background:#F59E0B;color:#fff;border:none;cursor:pointer;font-size:12px;font-weight:600">Fazer upgrade</button>
+    </div>`:''}
+  </div>`;
+}
+
+function painelPromo(l) {
+  return `
+  <div class="promo-painel">
+    <h3>Promoção ativa 🏷️</h3>
+    <p style="color:#666;font-size:14px;margin-bottom:16px">Esta promoção aparece na ficha da sua loja e na vitrine TV do bairro.</p>
+    <div class="fg">
+      <label>Texto da promoção</label>
+      <input id="promoTxt" value="${l.promo||''}" placeholder="Ex: 10% de desconto na primeira compra">
+    </div>
+    <div style="display:flex;gap:10px">
+      <button class="btn-green" onclick="savePromo()">Salvar promoção</button>
+      <button class="btn-outline" onclick="removePromo()">Remover</button>
+    </div>
+    ${l.promo?`<div class="promo-preview">
+      <div style="font-size:12px;color:#888;margin-bottom:4px">Preview na vitrine:</div>
+      <div class="pp-preview-box">🏷️ ${l.promo}</div>
+    </div>`:''}
+  </div>`;
+}
+
+function painelPerfil(l) {
+  return `
+  <div class="cad-form" style="max-width:580px">
+    <div class="fg-row">
+      <div class="fg"><label>Nome</label><input id="pNome" value="${l.nome||''}"></div>
+      <div class="fg"><label>Categoria</label>
+        <select id="pCat">
+          ${['alimentacao','servicos','varejo','saude','beleza','educacao'].map(c=>
+            `<option value="${c}" ${l.categoria===c?'selected':''}>${catL(c)}</option>`).join('')}
+        </select>
+      </div>
+    </div>
+    <div class="fg-row">
+      <div class="fg"><label>Bairro</label><input id="pBairro" value="${l.bairro||''}"></div>
+      <div class="fg"><label>Endereço</label><input id="pEnd" value="${l.endereco||''}"></div>
+    </div>
+    <div class="fg-row">
+      <div class="fg"><label>Telefone</label><input id="pTel" value="${l.telefone||''}"></div>
+      <div class="fg"><label>Horário</label><input id="pHor" value="${l.horario||''}"></div>
+    </div>
+    <div class="fg"><label>Descrição</label><textarea id="pDesc" rows="3">${l.descricao||''}</textarea></div>
+    <div class="fg"><label>URL foto de capa</label><input id="pCover" value="${l.coverUrl||''}" placeholder="https://..."></div>
+    <button class="btn-green" onclick="savePerfil()">Salvar alterações</button>
+  </div>`;
+}
+
+function painelVitrine(l) {
+  const url = `${location.origin}${location.pathname}#vitrine/${encodeURIComponent(l.bairro)}`;
+  return `
+  <div class="vitrine-tab">
+    <h3>📺 Sua loja na vitrine TV</h3>
+    <p style="color:#666;font-size:14px;margin-bottom:20px">Abra este link em qualquer TV, tablet ou display. As promoções passam automaticamente, em tempo real.</p>
+    <div class="link-copy-box">
+      <span id="vtUrl">${url}</span>
+      <button class="btn-green" onclick="copyLink('vtUrl')">📋 Copiar</button>
+    </div>
+    <div class="tv-how">
+      <h4>Como usar na TV 📺</h4>
+      <div class="how-steps">
+        <div class="how-step"><span class="hs-n">1</span><span>Abra o Chrome na TV ou Chromecast</span></div>
+        <div class="how-step"><span class="hs-n">2</span><span>Digite ou cole o link acima</span></div>
+        <div class="how-step"><span class="hs-n">3</span><span>Pressione F11 para tela cheia</span></div>
+        <div class="how-step"><span class="hs-n">4</span><span>Pronto! As promoções passam sozinhas 🎉</span></div>
+      </div>
+    </div>
+  </div>`;
+}
+
+window.setPT = (el,t) => {
+  document.querySelectorAll('.ptab').forEach(b=>b.classList.remove('active'));
+  document.querySelectorAll('.pt-c').forEach(c=>c.classList.remove('active'));
+  el.classList.add('active');
+  document.getElementById('pt-'+t)?.classList.add('active');
+  if(t==='avs') loadPainelAvs();
+};
+
+async function loadPainelAvs() {
+  if(!myLoja) return;
+  const snap = await getDocs(query(collection(db,'avaliacoes'),
+    where('lojaId','==',myLoja.id), orderBy('criadoEm','desc')));
+  const avs = snap.docs.map(d=>({id:d.id,...d.data()}));
+  const el = document.getElementById('avs-list');
+  if(!el) return;
+  if(avs.length===0){el.innerHTML='<p style="color:#888">Nenhuma avaliação ainda.</p>';return;}
+  el.innerHTML = avs.map(a=>`
+    <div class="av-card">
+      <div class="av-top"><strong>${a.autor||'Anônimo'}</strong><span>${starStr(a.nota)} ${a.nota}</span></div>
+      <p>${a.texto||''}</p>
+      ${a.resposta?`<div class="av-resp">💬 <em>Você respondeu:</em> ${a.resposta}</div>`:`
+      <div class="av-reply-row">
+        <input id="rp-${a.id}" placeholder="Responder publicamente...">
+        <button class="btn-green" style="white-space:nowrap;padding:8px 14px;font-size:13px" onclick="replyAv('${a.id}')">Responder</button>
+      </div>`}
+    </div>`).join('');
+}
+
+window.replyAv = async id => {
+  const txt = document.getElementById('rp-'+id)?.value.trim();
+  if(!txt) return;
+  await updateDoc(doc(db,'avaliacoes',id),{resposta:txt});
+  toast('Resposta publicada! 💬','ok');
+  loadPainelAvs();
+};
+
+window.savePromo = async () => {
+  if(!myLoja) return;
+  const promo = document.getElementById('promoTxt')?.value.trim()||'';
+  await updateDoc(doc(db,'lojas',myLoja.id),{promo});
+  myLoja.promo=promo;
+  toast('Promoção salva! 🏷️','ok');
+};
+window.removePromo = async () => {
+  if(!myLoja) return;
+  await updateDoc(doc(db,'lojas',myLoja.id),{promo:''});
+  myLoja.promo='';
+  if(document.getElementById('promoTxt')) document.getElementById('promoTxt').value='';
+  toast('Promoção removida.','ok');
+};
+window.savePerfil = async () => {
+  if(!myLoja) return;
+  const upd = {
+    nome:     document.getElementById('pNome')?.value.trim()||myLoja.nome,
+    categoria:document.getElementById('pCat')?.value||myLoja.categoria,
+    bairro:   document.getElementById('pBairro')?.value.trim()||myLoja.bairro,
+    endereco: document.getElementById('pEnd')?.value.trim()||'',
+    telefone: document.getElementById('pTel')?.value.trim()||'',
+    horario:  document.getElementById('pHor')?.value.trim()||'',
+    descricao:document.getElementById('pDesc')?.value.trim()||'',
+    coverUrl: document.getElementById('pCover')?.value.trim()||'',
+  };
+  await updateDoc(doc(db,'lojas',myLoja.id),upd);
+  Object.assign(myLoja,upd);
+  toast('Perfil salvo! ✅','ok');
+};
+window.toggleAberto = async () => {
+  if(!myLoja) return;
+  const novo = !myLoja.aberto;
+  await updateDoc(doc(db,'lojas',myLoja.id),{aberto:novo});
+  myLoja.aberto=novo;
+  const btn = document.getElementById('togBtn');
+  if(btn){ btn.textContent=novo?'✅ Aberto agora':'🔴 Fechado — toque para abrir'; btn.className=`toggle-btn ${novo?'tog-open':'tog-closed'}`; }
+  toast(novo?'Loja aberta! ✅':'Loja fechada 🔴','ok');
+};
+window.copyLink = id => {
+  navigator.clipboard.writeText(document.getElementById(id)?.textContent||'');
+  toast('Link copiado! 📋','ok');
+};
+
+// ══════════════════════════════════════════════
+//  ADMIN
+// ══════════════════════════════════════════════
+function pgAdmin() {
+  if(!isAdmin) return `<div class="page-msg"><span style="font-size:48px">🚫</span><h2>Acesso negado</h2></div>`;
+  return `
+  <div class="admin-wrap">
+    <h1 class="admin-title">⚙️ Área administrativa</h1>
+    <div class="a-tabs-row">
+      <button class="ptab active" onclick="setAT(this,'a-lojas')">🏪 Lojas</button>
+      <button class="ptab"        onclick="setAT(this,'a-pendentes')">⏳ Pendentes</button>
+      <button class="ptab"        onclick="setAT(this,'a-avs')">💬 Avaliações</button>
+      <button class="ptab"        onclick="setAT(this,'a-financeiro')">💰 Financeiro</button>
+    </div>
+
+    <div id="a-lojas" class="pt-c active">
+      <div class="admin-filters">
+        <input id="aSearch" placeholder="🔍 Buscar loja..." oninput="filterAdmin()">
+        <select id="aFiltPlano" onchange="filterAdmin()">
+          <option value="">Todos os planos</option>
+          <option value="basico">Básico</option>
+          <option value="vitrine">Vitrine</option>
+          <option value="premium">Premium</option>
+        </select>
+        <select id="aFiltAtivo" onchange="filterAdmin()">
+          <option value="">Todas</option>
+          <option value="true">Ativas</option>
+          <option value="false">Inativas</option>
+        </select>
+      </div>
+      <div id="a-count" class="exp-count"></div>
+      <div id="a-list"></div>
+    </div>
+
+    <div id="a-pendentes" class="pt-c">
+      <h3 style="margin-bottom:16px">Lojas aguardando aprovação ⏳</h3>
+      <div id="a-pend-list"><p style="color:#888">Carregando...</p></div>
+    </div>
+
+    <div id="a-avs" class="pt-c">
+      <h3 style="margin-bottom:16px">Avaliações recentes 💬</h3>
+      <div id="a-avs-list"><p style="color:#888">Carregando...</p></div>
+    </div>
+
+    <div id="a-financeiro" class="pt-c">
+      <div id="a-fin-content"><p style="color:#888">Carregando...</p></div>
+    </div>
+  </div>`;
+}
+
+let adminLojas = [];
+
+window.setAT = (el,tab) => {
+  document.querySelectorAll('.a-tabs-row .ptab').forEach(b=>b.classList.remove('active'));
+  document.querySelectorAll('.admin-wrap .pt-c').forEach(c=>c.classList.remove('active'));
+  el.classList.add('active');
+  document.getElementById(tab)?.classList.add('active');
+  if(tab==='a-pendentes') loadPendentes();
+  if(tab==='a-avs') loadAdminAvs();
+  if(tab==='a-financeiro') loadFinanceiro();
+};
+
+async function loadAdmin() {
+  const snap = await getDocs(query(collection(db,'lojas'), orderBy('criadoEm','desc')));
+  adminLojas = snap.docs.map(d=>({id:d.id,...d.data()}));
+  renderAdminList(adminLojas);
+}
+
+window.filterAdmin = () => {
+  const q  = (document.getElementById('aSearch')?.value||'').toLowerCase();
+  const pl = document.getElementById('aFiltPlano')?.value||'';
+  const at = document.getElementById('aFiltAtivo')?.value;
+  const f  = adminLojas.filter(l=>{
+    if(pl && l.plano!==pl) return false;
+    if(at!==''&&at!==undefined && String(l.ativo)!==at) return false;
+    if(q && !`${l.nome}${l.bairro}`.toLowerCase().includes(q)) return false;
+    return true;
+  });
+  renderAdminList(f);
+};
+
+function renderAdminList(lojas) {
+  const cnt = document.getElementById('a-count');
+  if(cnt) cnt.textContent=`${lojas.length} loja${lojas.length!==1?'s':''}`;
+  const el = document.getElementById('a-list');
+  if(!el) return;
+  el.innerHTML = lojas.map(l=>`
+    <div class="admin-row">
+      <div class="ar-avatar" style="background:${CAT_COLORS[l.categoria]||'#eee'}">
+        ${l.coverUrl?`<img src="${l.coverUrl}" style="width:100%;height:100%;object-fit:cover;border-radius:50%">`:`<span>${CAT_EMOJIS[l.categoria]||'🏪'}</span>`}
+      </div>
+      <div class="ar-info">
+        <strong>${l.nome}</strong>
+        <span>📍 ${l.bairro} · ${catL(l.categoria)}</span>
+        <div class="ar-chips">
+          <span class="plano-chip plano-${l.plano}">${planoL(l.plano)}</span>
+          <span class="chip ${l.ativo?'chip-green':'chip-gray'}">${l.ativo?'Ativa':'Inativa'}</span>
+          <span class="chip ${l.aprovado?'chip-green':'chip-orange'}">${l.aprovado?'Aprovada':'Pendente'}</span>
+          <span style="font-size:12px;color:#888">⭐ ${(l.rating||0).toFixed(1)} · 👁️ ${l.visualizacoes||0}</span>
+        </div>
+      </div>
+      <div class="ar-actions">
+        ${!l.aprovado?`<button class="btn-green" style="padding:6px 14px;font-size:13px" onclick="aprovarLoja('${l.id}')">✅ Aprovar</button>`:''}
+        <button class="btn-outline" style="font-size:13px" onclick="toggleAtivoAdmin('${l.id}',${l.ativo})">${l.ativo?'Desativar':'Ativar'}</button>
+        <select onchange="mudarPlanoAdmin('${l.id}',this.value)" style="font-size:12px;padding:6px 10px;border-radius:8px;border:1.5px solid #eee">
+          ${['basico','vitrine','premium'].map(p=>`<option value="${p}" ${l.plano===p?'selected':''}>${planoL(p)}</option>`).join('')}
+        </select>
+        <button class="btn-danger" onclick="deletarLoja('${l.id}')">🗑️</button>
+      </div>
+    </div>`).join('');
+}
+
+async function loadPendentes() {
+  const snap = await getDocs(query(collection(db,'lojas'),where('aprovado','==',false)));
+  const pend = snap.docs.map(d=>({id:d.id,...d.data()}));
+  const el = document.getElementById('a-pend-list');
+  if(!el) return;
+  if(pend.length===0){el.innerHTML='<div class="page-msg" style="min-height:auto;padding:40px"><span style="font-size:40px">🎉</span><p>Nenhuma loja pendente!</p></div>';return;}
+  el.innerHTML = pend.map(l=>`
+    <div class="admin-row" style="border-left:4px solid #F59E0B">
+      <div class="ar-avatar" style="background:${CAT_COLORS[l.categoria]||'#eee'}">${CAT_EMOJIS[l.categoria]||'🏪'}</div>
+      <div class="ar-info">
+        <strong>${l.nome}</strong>
+        <span>📍 ${l.bairro} · ${catL(l.categoria)} · ${planoL(l.plano)}</span>
+        ${l.descricao?`<span style="font-size:12px;color:#666">${l.descricao.substring(0,80)}...</span>`:''}
+      </div>
+      <div class="ar-actions">
+        <button class="btn-green" style="padding:8px 18px" onclick="aprovarLoja('${l.id}')">✅ Aprovar</button>
+        <button class="btn-danger" onclick="rejeitarLoja('${l.id}')">❌ Rejeitar</button>
+      </div>
+    </div>`).join('');
+}
+
+async function loadAdminAvs() {
+  const snap = await getDocs(query(collection(db,'avaliacoes'), orderBy('criadoEm','desc'), limit(30)));
+  const avs = snap.docs.map(d=>({id:d.id,...d.data()}));
+  const el = document.getElementById('a-avs-list');
+  if(!el) return;
+  el.innerHTML = avs.map(a=>`
+    <div class="av-card">
+      <div class="av-top">
+        <div><strong>${a.autor||'Anônimo'}</strong> <span style="font-size:12px;color:#888">em loja ${a.lojaId.substring(0,8)}...</span></div>
+        <div style="display:flex;gap:8px;align-items:center">
+          <span>${starStr(a.nota)} ${a.nota}</span>
+          <button class="btn-danger" style="padding:4px 10px;font-size:12px" onclick="deletarAv('${a.id}','${a.lojaId}')">🗑️</button>
+        </div>
+      </div>
+      <p>${a.texto||''}</p>
+    </div>`).join('');
+}
+
+async function loadFinanceiro() {
+  const snap = await getDocs(collection(db,'lojas'));
+  const lojas = snap.docs.map(d=>d.data());
+  const total   = lojas.length;
+  const ativos  = lojas.filter(l=>l.ativo).length;
+  const aprov   = lojas.filter(l=>l.aprovado).length;
+  const vitrine = lojas.filter(l=>l.plano==='vitrine').length;
+  const premium = lojas.filter(l=>l.plano==='premium').length;
+  const basico  = lojas.filter(l=>l.plano==='basico').length;
+  const mrr     = vitrine*39.90+premium*159;
+  const avSnap  = await getDocs(collection(db,'avaliacoes'));
+  const totalViews = lojas.reduce((s,l)=>s+(l.visualizacoes||0),0);
+
+  const el = document.getElementById('a-fin-content');
+  if(!el) return;
+  el.innerHTML = `
+  <div class="fin-metrics">
+    <div class="fin-card green">
+      <div class="fin-val">R$ ${mrr.toLocaleString('pt-BR',{minimumFractionDigits:2})}</div>
+      <div class="fin-lbl">MRR estimado</div>
+    </div>
+    <div class="fin-card">
+      <div class="fin-val">R$ ${(mrr*12/1000).toFixed(1)}k</div>
+      <div class="fin-lbl">ARR projetado</div>
+    </div>
+    <div class="fin-card">
+      <div class="fin-val">${vitrine+premium}</div>
+      <div class="fin-lbl">Assinantes pagos</div>
+    </div>
+    <div class="fin-card">
+      <div class="fin-val">${total}</div>
+      <div class="fin-lbl">Total de lojas</div>
+    </div>
+    <div class="fin-card">
+      <div class="fin-val">${aprov}</div>
+      <div class="fin-lbl">Lojas aprovadas</div>
+    </div>
+    <div class="fin-card">
+      <div class="fin-val">${avSnap.size}</div>
+      <div class="fin-lbl">Avaliações</div>
+    </div>
+    <div class="fin-card">
+      <div class="fin-val">${totalViews.toLocaleString('pt-BR')}</div>
+      <div class="fin-lbl">Views totais</div>
+    </div>
+    <div class="fin-card">
+      <div class="fin-val">R$ ${vitrine>0||premium>0?((mrr/(vitrine+premium)).toFixed(2).replace('.',',')):0}</div>
+      <div class="fin-lbl">Ticket médio</div>
+    </div>
+  </div>
+  <div class="fin-breakdown">
+    <h3>Distribuição por plano</h3>
+    <div class="fin-bar-wrap">
+      <div class="fin-bar-row">
+        <span style="min-width:70px">Básico</span>
+        <div class="fin-track"><div class="fin-fill" style="width:${total?Math.round(basico/total*100):0}%;background:#E5E7EB"></div></div>
+        <span>${basico} lojas</span>
+      </div>
+      <div class="fin-bar-row">
+        <span style="min-width:70px">Vitrine</span>
+        <div class="fin-track"><div class="fin-fill" style="width:${total?Math.round(vitrine/total*100):0}%;background:#10B981"></div></div>
+        <span>${vitrine} lojas · R$ ${(vitrine*39.90).toLocaleString('pt-BR',{minimumFractionDigits:2})}/mês</span>
+      </div>
+      <div class="fin-bar-row">
+        <span style="min-width:70px">Premium</span>
+        <div class="fin-track"><div class="fin-fill" style="width:${total?Math.round(premium/total*100):0}%;background:#F59E0B"></div></div>
+        <span>${premium} lojas · R$ ${(premium*159).toLocaleString('pt-BR',{minimumFractionDigits:2})}/mês</span>
+      </div>
+    </div>
+  </div>`;
+}
+
+window.aprovarLoja = async id => {
+  await updateDoc(doc(db,'lojas',id),{aprovado:true});
+  const l = adminLojas.find(x=>x.id===id);
+  if(l) l.aprovado=true;
+  filterAdmin(); loadPendentes();
+  toast('Loja aprovada! ✅','ok');
+};
+window.rejeitarLoja = async id => {
+  if(!confirm('Rejeitar e remover esta loja?')) return;
+  await deleteDoc(doc(db,'lojas',id));
+  adminLojas = adminLojas.filter(l=>l.id!==id);
+  loadPendentes(); filterAdmin();
+  toast('Loja rejeitada.','ok');
+};
+window.toggleAtivoAdmin = async (id,atual) => {
+  await updateDoc(doc(db,'lojas',id),{ativo:!atual});
+  const l=adminLojas.find(x=>x.id===id); if(l) l.ativo=!atual;
+  filterAdmin(); toast('Status atualizado.','ok');
+};
+window.mudarPlanoAdmin = async (id,plano) => {
+  await updateDoc(doc(db,'lojas',id),{plano});
+  const l=adminLojas.find(x=>x.id===id); if(l) l.plano=plano;
+  toast('Plano atualizado.','ok');
+};
+window.deletarLoja = async id => {
+  if(!confirm('Remover loja permanentemente?')) return;
+  await deleteDoc(doc(db,'lojas',id));
+  adminLojas=adminLojas.filter(l=>l.id!==id);
+  filterAdmin(); toast('Loja removida.','ok');
+};
+window.deletarAv = async (avId, lojaId) => {
+  if(!confirm('Remover esta avaliação?')) return;
+  await deleteDoc(doc(db,'avaliacoes',avId));
+  const all = await getDocs(query(collection(db,'avaliacoes'),where('lojaId','==',lojaId)));
+  const notas = all.docs.map(d=>d.data().nota);
+  if(notas.length>0) {
+    await updateDoc(doc(db,'lojas',lojaId),{rating:parseFloat((notas.reduce((a,b)=>a+b,0)/notas.length).toFixed(1)),totalAvaliacoes:notas.length});
+  } else {
+    await updateDoc(doc(db,'lojas',lojaId),{rating:0,totalAvaliacoes:0});
+  }
+  toast('Avaliação removida.','ok');
+  loadAdminAvs();
+};
+
+// ══════════════════════════════════════════════
+//  VITRINE TV
+// ══════════════════════════════════════════════
+function renderVitrinePage(bairro) {
+  document.getElementById('root').innerHTML = `
+  <div class="vt-wrap">
+    <div class="vt-top">
+      <div class="vt-logo">bairro<span>on</span></div>
+      <div class="vt-bairro-name">${bairro?decodeURIComponent(bairro):'Promoções do bairro'}</div>
+      <div class="vt-clock" id="vtClock">--:--</div>
+    </div>
+    <div class="vt-main" id="vtMain"><div class="vt-loading">Carregando promoções...</div></div>
+    <div class="vt-prog-bar"><div class="vt-prog-fill" id="vtProg"></div></div>
+    <div class="vt-dots" id="vtDots"></div>
+    <div class="vt-bottom">
+      <span>bairroon.com.br</span>
+      <span>Anuncie seu comércio — R$ 39,90/mês</span>
+      ${bairro?`<span>📍 ${decodeURIComponent(bairro)}</span>`:''}
+    </div>
+  </div>`;
+
+  // clock
+  const tickClock = () => {
+    const el=document.getElementById('vtClock');
+    if(el){const n=new Date();el.textContent=String(n.getHours()).padStart(2,'0')+':'+String(n.getMinutes()).padStart(2,'0');}
+  };
+  tickClock(); setInterval(tickClock,10000);
+
+  // lojas
+  const bDec = bairro?decodeURIComponent(bairro):'';
+  const q2 = bDec
+    ? query(collection(db,'lojas'),where('ativo','==',true),where('aprovado','==',true),where('bairro','==',bDec))
+    : query(collection(db,'lojas'),where('ativo','==',true),where('aprovado','==',true));
+
+  const VT_COLS=['#1D9E75','#F59E0B','#EF4444','#8B5CF6','#3B82F6','#EC4899'];
+  let vtCur=0,vtStart=null,vtRaf=null,vtTotal=0;
+
+  onSnapshot(q2, snap => {
+    const lojas = snap.docs.map(d=>({id:d.id,...d.data()})).filter(l=>l.promo&&l.plano!=='basico');
+    const main  = document.getElementById('vtMain');
+    const dots  = document.getElementById('vtDots');
+    if(!main||!dots) return;
+
+    if(lojas.length===0){main.innerHTML='<div class="vt-empty">Nenhuma promoção ativa no momento 😊</div>';return;}
+
+    main.innerHTML = lojas.map((l,i)=>{
+      const cor=VT_COLS[i%VT_COLS.length];
+      return `<div class="vt-slide ${i===0?'on':''}" data-vi="${i}">
+        <div class="vts-accent" style="background:${cor}"></div>
+        <div class="vts-body">
+          <div class="vts-cat" style="color:${cor}">${CAT_EMOJIS[l.categoria]||'🏪'} ${catL(l.categoria)} · ${l.bairro}</div>
+          <div class="vts-nome">${l.nome}</div>
+          <div class="vts-promo" style="color:${cor}">🏷️ ${l.promo}</div>
+          <div class="vts-info">
+            ${l.telefone?`<span>📞 ${l.telefone}</span>`:''}
+            ${l.rating>0?`<span>⭐ ${l.rating.toFixed(1)} · ${l.totalAvaliacoes} avaliações</span>`:''}
+            ${l.horario?`<span>🕐 ${l.horario}</span>`:''}
+          </div>
+        </div>
+      </div>`;
+    }).join('');
+
+    vtTotal=lojas.length;
+    dots.innerHTML=lojas.map((_,i)=>`<div class="vt-dot${i===0?' on':''}" onclick="vtGo(${i})"></div>`).join('');
+
+    window.vtGo = idx => {
+      document.querySelectorAll('.vt-slide').forEach(s=>s.classList.remove('on'));
+      document.querySelectorAll('.vt-dot').forEach(d=>d.classList.remove('on'));
+      vtCur=idx;
+      document.querySelector(`.vt-slide[data-vi="${idx}"]`)?.classList.add('on');
+      document.querySelectorAll('.vt-dot')[idx]?.classList.add('on');
+      vtStart=performance.now();
+    };
+    if(vtRaf) cancelAnimationFrame(vtRaf);
+    vtStart=performance.now();
+    (function loop(ts){
+      if(!vtStart) vtStart=ts;
+      const pct=Math.min((ts-vtStart)/7000*100,100);
+      const p=document.getElementById('vtProg');
+      if(p) p.style.width=pct+'%';
+      if(ts-vtStart>=7000) window.vtGo((vtCur+1)%vtTotal);
+      vtRaf=requestAnimationFrame(loop);
+    })(performance.now());
+  });
+}
+
+// ══════════════════════════════════════════════
+//  HYDRATE (chama inits após render)
+// ══════════════════════════════════════════════
+function hydrate(r) {
+  if(r==='home')     loadHome();
+  if(r==='explorar') loadExplorar();
+  if(r==='admin' && isAdmin) loadAdmin();
+}
+
+// ── HELPERS ──────────────────────────────────
+function starStr(r) {
+  let s='';
+  for(let i=1;i<=5;i++) s+=`<span style="color:${i<=Math.round(r)?'#F59E0B':'#D1D5DB'}">★</span>`;
+  return s;
+}
+function catL(c) {
+  return {alimentacao:'Alimentação',servicos:'Serviços',varejo:'Varejo',saude:'Saúde',beleza:'Beleza',educacao:'Educação'}[c]||c;
+}
+function planoL(p) {
+  return {basico:'Grátis',vitrine:'Vitrine R$39,90',premium:'Premium R$159'}[p]||p;
+}
+function needLogin(acao) {
+  return `<div class="page-msg">
+    <span style="font-size:48px">👋</span>
+    <h2>Entre para ${acao}</h2>
+    <button class="btn-green" style="margin-top:16px" onclick="doLogin()">Entrar com Google</button>
+  </div>`;
+}
+window.toast = function(msg,type='ok') {
+  const c=document.getElementById('toasts');
+  if(!c) return;
+  const t=document.createElement('div');
+  t.className=`toast toast-${type}`;
+  t.textContent=msg;
+  c.appendChild(t);
+  setTimeout(()=>t.classList.add('show'),10);
+  setTimeout(()=>{t.classList.remove('show');setTimeout(()=>t.remove(),300);},3000);
+};
+
+render();
+</script>
+
+<style>
+/* ── BASE ── */
+*{box-sizing:border-box;margin:0;padding:0}
+html{scroll-behavior:smooth}
+body{font-family:'Plus Jakarta Sans',sans-serif;background:#FAFAF9;color:#1a1a1a;font-size:15px;line-height:1.6;overflow-x:hidden}
+a{text-decoration:none;color:inherit}
+input,select,textarea,button{font-family:inherit}
+
+/* ── NAV ── */
+.nav{position:fixed;top:0;left:0;right:0;z-index:100;display:flex;align-items:center;justify-content:space-between;padding:12px 32px;background:rgba(255,255,255,.95);backdrop-filter:blur(12px);border-bottom:1px solid #F0F0F0;gap:16px}
+.logo{font-size:22px;font-weight:800;color:#1a1a1a;letter-spacing:-0.5px}
+.logo span{color:#10B981}
+.nav-links{display:flex;gap:6px}
+.nl{padding:7px 14px;border-radius:20px;font-size:14px;font-weight:500;color:#666;transition:all .15s}
+.nl:hover,.nl.act{background:#F0FDF4;color:#10B981}
+.nav-right{display:flex;align-items:center;gap:10px}
+.nav-avatar{width:30px;height:30px;border-radius:50%;border:2px solid #E5E7EB}
+.nav-name{font-size:14px;font-weight:600;color:#374151}
+.btn-login{display:flex;align-items:center;gap:8px;padding:8px 16px;border-radius:20px;border:1.5px solid #E5E7EB;background:#fff;font-size:13px;font-weight:600;cursor:pointer;transition:all .2s}
+.btn-login:hover{border-color:#10B981;color:#10B981}
+.btn-out{padding:7px 14px;border-radius:20px;border:1.5px solid #E5E7EB;background:transparent;font-size:13px;color:#999;cursor:pointer}
+.btn-out:hover{background:#FEF2F2;color:#EF4444;border-color:#EF4444}
+
+/* ── PAGE ── */
+.page{padding-top:64px;min-height:100vh}
+
+/* ── BUTTONS ── */
+.btn-green{background:#10B981;color:#fff;border:none;padding:11px 24px;border-radius:24px;font-size:14px;font-weight:700;cursor:pointer;transition:all .2s}
+.btn-green:hover{background:#059669;transform:translateY(-1px)}
+.btn-white{background:#fff;color:#1a1a1a;border:1.5px solid #E5E7EB;padding:10px 24px;border-radius:24px;font-size:14px;font-weight:600;cursor:pointer;transition:all .2s}
+.btn-white:hover{border-color:#10B981;color:#10B981}
+.btn-green-outline{background:transparent;color:#10B981;border:2px solid #10B981;padding:10px 28px;border-radius:24px;font-size:14px;font-weight:700;cursor:pointer;transition:all .2s}
+.btn-green-outline:hover{background:#F0FDF4}
+.btn-outline{background:transparent;color:#374151;border:1.5px solid #E5E7EB;padding:9px 18px;border-radius:20px;font-size:14px;font-weight:500;cursor:pointer;transition:all .2s}
+.btn-outline:hover{border-color:#374151}
+.btn-danger{background:transparent;color:#EF4444;border:1.5px solid #FCA5A5;padding:7px 12px;border-radius:10px;font-size:13px;cursor:pointer}
+.btn-danger:hover{background:#FEF2F2}
+
+/* ── HOME ── */
+.home-hero{background:linear-gradient(135deg,#F0FDF4 0%,#ECFDF5 50%,#D1FAE5 100%);padding:80px 40px 60px;text-align:center}
+.hero-pill{display:inline-block;background:#D1FAE5;color:#065F46;font-size:12px;font-weight:700;padding:5px 14px;border-radius:20px;margin-bottom:20px;letter-spacing:.3px}
+h1{font-size:clamp(36px,6vw,68px);font-weight:800;line-height:1.05;letter-spacing:-2px;margin-bottom:16px}
+h1 em{color:#10B981;font-style:normal}
+.home-hero p{font-size:17px;color:#4B5563;max-width:480px;margin:0 auto 28px}
+.hero-btns{display:flex;gap:12px;justify-content:center;flex-wrap:wrap}
+.home-cats,.home-feed{max-width:1100px;margin:0 auto;padding:40px 32px}
+.sec-title{font-size:22px;font-weight:800;letter-spacing:-.5px;margin-bottom:20px}
+.cats-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(140px,1fr));gap:12px}
+.cat-card{border-radius:16px;padding:20px 16px;text-align:center;cursor:pointer;transition:all .2s;border:2px solid transparent}
+.cat-card:hover{transform:translateY(-3px);border-color:rgba(0,0,0,.08)}
+.cat-emoji{font-size:32px;display:block;margin-bottom:8px}
+.cat-label{font-size:14px;font-weight:700;color:#374151}
+.feed-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(240px,1fr));gap:16px}
+.lojas-grid{display:flex;flex-direction:column;gap:10px}
+
+/* promo card */
+.promo-card{background:#fff;border-radius:16px;border:1px solid #F0F0F0;overflow:hidden;cursor:pointer;transition:all .2s}
+.promo-card:hover{transform:translateY(-3px);box-shadow:0 8px 24px rgba(0,0,0,.08)}
+.pc-cover{height:140px;display:flex;align-items:center;justify-content:center;overflow:hidden}
+.pc-cover-img{width:100%;height:100%;object-fit:cover}
+.pc-body{padding:14px}
+.pc-nome{font-size:14px;font-weight:700;margin-bottom:4px}
+.pc-promo{font-size:13px;color:#10B981;font-weight:600;margin-bottom:4px}
+.pc-bairro{font-size:12px;color:#9CA3AF}
+
+/* store row */
+.store-row{display:flex;align-items:center;gap:14px;padding:12px 16px;background:#fff;border-radius:14px;border:1px solid #F0F0F0;cursor:pointer;transition:all .15s}
+.store-row:hover{border-color:#10B981;background:#F0FDF4}
+.sr-avatar{width:48px;height:48px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:22px;flex-shrink:0;overflow:hidden}
+.sr-info{flex:1}
+.sr-name{font-size:14px;font-weight:700;margin-bottom:2px}
+.sr-sub{font-size:12px;color:#9CA3AF;margin-bottom:3px}
+.sr-stars{font-size:13px}
+.sr-promo-tag{font-size:11px;font-weight:700;background:#FEF3C7;color:#92400E;padding:3px 10px;border-radius:10px;white-space:nowrap}
+
+/* CTA banner */
+.cta-banner{background:linear-gradient(135deg,#065F46,#10B981);padding:48px 40px;display:flex;align-items:center;justify-content:space-between;gap:24px;flex-wrap:wrap;margin-top:20px}
+.cta-text h2{color:#fff;font-size:24px;font-weight:800;margin-bottom:6px}
+.cta-text p{color:rgba(255,255,255,.8);font-size:15px}
+.cta-text strong{color:#fff}
+.cta-banner .btn-green{background:#fff;color:#065F46;box-shadow:0 4px 12px rgba(0,0,0,.15)}
+
+/* ── EXPLORAR ── */
+.exp-wrap{max-width:1100px;margin:0 auto;padding:32px}
+.exp-top{display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin-bottom:16px}
+.exp-search-wrap{display:flex;align-items:center;gap:8px;flex:1;min-width:200px;background:#fff;border:1.5px solid #E5E7EB;border-radius:12px;padding:9px 14px}
+.search-icon{font-size:16px}
+.exp-search{border:none;outline:none;font-size:14px;flex:1;background:transparent}
+.exp-sel{padding:9px 14px;border:1.5px solid #E5E7EB;border-radius:12px;font-size:14px;background:#fff;color:#374151;cursor:pointer}
+.exp-check{display:flex;align-items:center;gap:6px;font-size:14px;color:#374151;cursor:pointer;white-space:nowrap}
+.cat-pills-row{display:flex;gap:8px;flex-wrap:wrap;margin-bottom:20px}
+.exp-cat{padding:7px 16px;border-radius:20px;border:1.5px solid #E5E7EB;background:#fff;font-size:13px;font-weight:600;color:#6B7280;cursor:pointer;transition:all .15s}
+.exp-cat:hover,.exp-cat.active{background:#10B981;color:#fff;border-color:#10B981}
+.exp-count{font-size:13px;color:#9CA3AF;margin-bottom:14px}
+.exp-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(240px,1fr));gap:16px}
+
+/* big card */
+.big-card{background:#fff;border-radius:18px;border:1.5px solid #F0F0F0;overflow:hidden;cursor:pointer;transition:all .2s;position:relative}
+.big-card:hover{transform:translateY(-4px);box-shadow:0 12px 32px rgba(0,0,0,.1)}
+.big-card.featured{border-color:#10B981}
+.bc-cover{height:140px;display:flex;align-items:center;justify-content:center;position:relative;overflow:hidden}
+.bc-cover-img{width:100%;height:100%;object-fit:cover}
+.bc-emoji{font-size:52px}
+.bc-promo-badge{position:absolute;top:10px;left:10px;background:#10B981;color:#fff;font-size:11px;font-weight:700;padding:3px 10px;border-radius:10px}
+.bc-dest-badge{position:absolute;top:10px;right:10px;background:#F59E0B;color:#fff;font-size:11px;font-weight:700;padding:3px 10px;border-radius:10px}
+.bc-body{padding:14px}
+.bc-cat-pill{font-size:11px;font-weight:700;padding:3px 10px;border-radius:10px;display:inline-block;margin-bottom:8px;color:#374151}
+.bc-name{font-size:15px;font-weight:800;margin-bottom:4px}
+.bc-addr{font-size:12px;color:#9CA3AF;margin-bottom:7px}
+.bc-stars{font-size:14px;margin-bottom:6px}
+.bc-rating{font-size:12px;color:#9CA3AF}
+.bc-promo-text{font-size:12px;color:#10B981;font-weight:600;margin-bottom:8px;background:#F0FDF4;padding:5px 9px;border-radius:8px}
+.bc-foot{display:flex;justify-content:space-between;align-items:center}
+.bc-status{font-size:11px;font-weight:700;padding:3px 9px;border-radius:8px}
+.bc-status.open{background:#D1FAE5;color:#065F46}
+.bc-status.closed{background:#F3F4F6;color:#9CA3AF}
+.bc-tel{font-size:11px;color:#9CA3AF}
+.empty-exp{grid-column:1/-1;text-align:center;padding:60px;color:#9CA3AF;font-size:16px;line-height:2}
+
+/* chips */
+.chip{font-size:12px;font-weight:600;padding:4px 12px;border-radius:20px;background:#F3F4F6;color:#374151;display:inline-block}
+.chip-green{background:#D1FAE5;color:#065F46}
+.chip-gray{background:#F3F4F6;color:#9CA3AF}
+.chip-orange{background:#FEF3C7;color:#92400E}
+
+/* ── MODAL ── */
+.modal-over{position:fixed;inset:0;background:rgba(0,0,0,.5);z-index:200;display:flex;align-items:flex-start;justify-content:center;padding:80px 20px;overflow-y:auto}
+.modal-box{background:#fff;border-radius:24px;max-width:520px;width:100%;position:relative;overflow:hidden}
+.modal-close{position:absolute;top:14px;right:14px;background:rgba(255,255,255,.9);border:none;width:32px;height:32px;border-radius:50%;font-size:16px;cursor:pointer;z-index:10;display:flex;align-items:center;justify-content:center}
+.modal-cover{height:180px;display:flex;align-items:center;justify-content:center;overflow:hidden}
+.mc-img{width:100%;height:100%;object-fit:cover}
+.modal-body{padding:20px}
+.modal-cat-pill{font-size:12px;font-weight:700;padding:4px 12px;border-radius:12px;display:inline-block;margin-bottom:10px;color:#374151}
+.modal-nome{font-size:24px;font-weight:800;letter-spacing:-.5px;margin-bottom:8px}
+.modal-desc{font-size:14px;color:#4B5563;margin-bottom:14px;line-height:1.6}
+.modal-chips{display:flex;gap:6px;flex-wrap:wrap;margin-bottom:14px}
+.modal-stars-row{display:flex;align-items:center;gap:8px;margin-bottom:14px}
+.modal-promo-box{background:#F0FDF4;border:1.5px solid #A7F3D0;border-radius:12px;padding:12px 16px;margin-bottom:16px;font-size:14px;color:#065F46}
+.modal-avs-title{font-size:15px;font-weight:800;margin-bottom:12px}
+.av-card{background:#F9FAFB;border-radius:12px;padding:12px 14px;margin-bottom:10px;font-size:14px}
+.av-top{display:flex;justify-content:space-between;align-items:center;margin-bottom:6px}
+.av-card p{color:#4B5563;font-size:13px}
+.av-resp{font-size:12px;background:#D1FAE5;border-radius:8px;padding:8px 12px;margin-top:8px;color:#065F46}
+.av-form{margin-top:20px;border-top:1px solid #F0F0F0;padding-top:16px}
+.av-form-title{font-size:15px;font-weight:700;margin-bottom:12px}
+.star-row{font-size:28px;cursor:pointer;margin-bottom:12px;display:flex;gap:4px}
+.star-btn{color:#D1D5DB;transition:color .1s}
+.star-btn.active{color:#F59E0B}
+.av-form textarea{width:100%;padding:10px 14px;border:1.5px solid #E5E7EB;border-radius:12px;font-size:14px;resize:vertical;margin-bottom:12px;outline:none}
+.av-form textarea:focus{border-color:#10B981}
+
+/* ── CADASTRO ── */
+.cad-wrap{max-width:680px;margin:0 auto;padding:40px 32px 60px}
+.cad-header{text-align:center;margin-bottom:32px}
+.cad-header h1{font-size:28px;font-weight:800;margin-bottom:8px}
+.cad-header p{color:#6B7280;font-size:15px}
+.cad-form{display:flex;flex-direction:column;gap:0}
+.fg{display:flex;flex-direction:column;gap:5px;margin-bottom:14px}
+.fg label{font-size:13px;font-weight:600;color:#374151}
+.fg input,.fg select,.fg textarea{padding:10px 14px;border:1.5px solid #E5E7EB;border-radius:12px;font-size:14px;outline:none;transition:border-color .2s;background:#fff}
+.fg input:focus,.fg select:focus,.fg textarea:focus{border-color:#10B981}
+.fg small{color:#9CA3AF}
+.fg-row{display:grid;grid-template-columns:1fr 1fr;gap:14px}
+.plano-wrap{margin:20px 0}
+.plano-title{font-size:16px;font-weight:800;margin-bottom:14px}
+.plano-row{display:grid;grid-template-columns:repeat(auto-fit,minmax(160px,1fr));gap:12px;margin-bottom:16px}
+.plano-opt{background:#fff;border:2px solid #E5E7EB;border-radius:16px;padding:18px;cursor:pointer;transition:all .15s;position:relative}
+.plano-opt:hover{border-color:#10B981}
+.plano-opt.active{border-color:#10B981;background:#F0FDF4}
+.po-badge{font-size:10px;font-weight:700;background:#FEF3C7;color:#92400E;padding:2px 8px;border-radius:6px;display:inline-block;margin-bottom:6px}
+.po-name{font-size:16px;font-weight:800;margin-bottom:4px}
+.po-price{font-size:22px;font-weight:800;color:#10B981;margin-bottom:6px}
+.po-price span{font-size:13px;font-weight:500;color:#9CA3AF}
+.po-desc{font-size:12px;color:#6B7280}
+
+/* ── PAINEL ── */
+.painel-wrap{max-width:860px;margin:0 auto;padding:32px}
+.painel-profile{background:#fff;border-radius:20px;border:1.5px solid #F0F0F0;overflow:hidden;margin-bottom:24px}
+.pp-cover{height:160px;display:flex;align-items:center;justify-content:center;overflow:hidden}
+.pp-cover-img{width:100%;height:100%;object-fit:cover}
+.pp-info{padding:20px}
+.pp-info h2{font-size:22px;font-weight:800;margin-bottom:10px}
+.pp-meta{display:flex;gap:8px;flex-wrap:wrap;margin-bottom:14px}
+.pp-toggle{display:flex;align-items:center;gap:12px;font-size:14px;color:#6B7280}
+.toggle-btn{padding:8px 18px;border-radius:20px;border:none;font-size:14px;font-weight:700;cursor:pointer;transition:all .2s}
+.tog-open{background:#D1FAE5;color:#065F46}
+.tog-closed{background:#F3F4F6;color:#6B7280}
+.plano-chip{font-size:11px;font-weight:700;padding:4px 12px;border-radius:20px}
+.plano-basico{background:#F3F4F6;color:#6B7280}
+.plano-vitrine{background:#D1FAE5;color:#065F46}
+.plano-premium{background:#FEF3C7;color:#92400E}
+.p-tabs-row{display:flex;gap:0;overflow-x:auto;border-bottom:1.5px solid #F0F0F0;margin-bottom:24px}
+.ptab{padding:12px 18px;background:transparent;border:none;font-size:14px;font-weight:600;color:#9CA3AF;cursor:pointer;border-bottom:2.5px solid transparent;transition:all .15s;white-space:nowrap}
+.ptab.active{color:#10B981;border-bottom-color:#10B981}
+.pt-c{display:none}.pt-c.active{display:block}
+.dash-metrics{display:grid;grid-template-columns:repeat(auto-fit,minmax(140px,1fr));gap:12px;margin-bottom:20px}
+.dm{background:#fff;border:1.5px solid #F0F0F0;border-radius:14px;padding:16px;text-align:center}
+.dm-val{font-size:24px;font-weight:800;margin-bottom:4px}
+.dm-lbl{font-size:12px;color:#9CA3AF;font-weight:600}
+.dash-status-card{background:#fff;border:1.5px solid #F0F0F0;border-radius:14px;padding:18px}
+.dash-status-card h3{font-size:15px;font-weight:700;margin-bottom:14px}
+.dsc-row{display:flex;justify-content:space-between;padding:8px 0;border-bottom:1px solid #F9FAFB;font-size:14px}
+.dsc-row:last-child{border-bottom:none}
+.dsc-row span{color:#9CA3AF}
+.promo-painel{max-width:500px}
+.promo-painel h3{font-size:17px;font-weight:800;margin-bottom:8px}
+.promo-preview{margin-top:16px}
+.pp-preview-box{background:#F0FDF4;border:1.5px solid #A7F3D0;border-radius:12px;padding:12px 16px;font-size:14px;color:#065F46;font-weight:600}
+.av-reply-row{display:flex;gap:8px;margin-top:8px}
+.av-reply-row input{flex:1;padding:8px 12px;border:1.5px solid #E5E7EB;border-radius:10px;font-size:13px;outline:none}
+.av-reply-row input:focus{border-color:#10B981}
+.vitrine-tab{max-width:560px}
+.vitrine-tab h3{font-size:17px;font-weight:800;margin-bottom:8px}
+.link-copy-box{display:flex;align-items:center;gap:12px;background:#F9FAFB;border:1.5px solid #E5E7EB;border-radius:12px;padding:12px 16px;margin-bottom:20px;flex-wrap:wrap}
+.link-copy-box span{flex:1;font-size:13px;color:#10B981;word-break:break-all}
+.tv-how{background:#F9FAFB;border-radius:14px;padding:18px}
+.tv-how h4{font-size:14px;font-weight:700;margin-bottom:12px}
+.how-steps{display:flex;flex-direction:column;gap:10px}
+.how-step{display:flex;align-items:center;gap:12px;font-size:14px}
+.hs-n{width:24px;height:24px;border-radius:50%;background:#10B981;color:#fff;font-size:12px;font-weight:800;display:flex;align-items:center;justify-content:center;flex-shrink:0}
+
+/* ── ADMIN ── */
+.admin-wrap{max-width:1000px;margin:0 auto;padding:32px}
+.admin-title{font-size:26px;font-weight:800;margin-bottom:24px}
+.a-tabs-row{display:flex;gap:0;border-bottom:1.5px solid #F0F0F0;margin-bottom:24px;overflow-x:auto}
+.admin-filters{display:flex;gap:10px;margin-bottom:16px;flex-wrap:wrap}
+.admin-filters input,.admin-filters select{padding:9px 14px;border:1.5px solid #E5E7EB;border-radius:12px;font-size:14px;outline:none}
+.admin-filters input:focus{border-color:#10B981}
+.admin-row{background:#fff;border:1.5px solid #F0F0F0;border-radius:14px;padding:14px 16px;display:flex;align-items:center;gap:14px;flex-wrap:wrap;margin-bottom:10px;transition:border-color .15s}
+.admin-row:hover{border-color:#E5E7EB}
+.ar-avatar{width:44px;height:44px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:20px;flex-shrink:0;overflow:hidden}
+.ar-info{flex:1;min-width:160px}
+.ar-info strong{display:block;font-size:14px;font-weight:700;margin-bottom:2px}
+.ar-info span{font-size:12px;color:#9CA3AF;display:block;margin-bottom:4px}
+.ar-chips{display:flex;gap:5px;flex-wrap:wrap}
+.ar-actions{display:flex;gap:6px;align-items:center;flex-wrap:wrap}
+.fin-metrics{display:grid;grid-template-columns:repeat(auto-fit,minmax(160px,1fr));gap:12px;margin-bottom:24px}
+.fin-card{background:#fff;border:1.5px solid #F0F0F0;border-radius:14px;padding:18px;text-align:center}
+.fin-card.green{border-color:#A7F3D0;background:#F0FDF4}
+.fin-val{font-size:24px;font-weight:800;margin-bottom:4px}
+.fin-lbl{font-size:12px;color:#9CA3AF;font-weight:600}
+.fin-breakdown{background:#fff;border:1.5px solid #F0F0F0;border-radius:14px;padding:20px}
+.fin-breakdown h3{font-size:15px;font-weight:700;margin-bottom:16px}
+.fin-bar-wrap{display:flex;flex-direction:column;gap:12px}
+.fin-bar-row{display:flex;align-items:center;gap:12px;font-size:13px;color:#374151}
+.fin-track{flex:1;height:8px;background:#F3F4F6;border-radius:4px;overflow:hidden}
+.fin-fill{height:100%;border-radius:4px;transition:width .6s ease}
+
+/* ── VITRINE TV ── */
+.vt-wrap{background:#0a1a10;min-height:100vh;display:flex;flex-direction:column;font-family:'Plus Jakarta Sans',sans-serif;overflow:hidden}
+.vt-top{display:flex;align-items:center;justify-content:space-between;padding:20px 32px;border-bottom:1px solid rgba(255,255,255,.07)}
+.vt-logo{font-size:24px;font-weight:800;color:#fff}.vt-logo span{color:#10B981}
+.vt-bairro-name{font-size:14px;color:rgba(255,255,255,.4)}
+.vt-clock{font-size:22px;font-weight:700;color:#fff;font-variant-numeric:tabular-nums}
+.vt-main{flex:1;display:flex;align-items:center;padding:48px 40px}
+.vt-loading,.vt-empty{color:rgba(255,255,255,.3);font-size:18px}
+.vt-slide{display:none;gap:20px;align-items:stretch;width:100%}
+.vt-slide.on{display:flex}
+.vts-accent{width:5px;border-radius:4px;flex-shrink:0;min-height:100px}
+.vts-body{flex:1}
+.vts-cat{font-size:13px;letter-spacing:1px;text-transform:uppercase;font-weight:700;margin-bottom:12px}
+.vts-nome{font-size:clamp(32px,5vw,64px);font-weight:800;line-height:1.05;color:#fff;margin-bottom:12px;letter-spacing:-1px}
+.vts-promo{font-size:clamp(18px,2.5vw,26px);font-weight:700;margin-bottom:16px}
+.vts-info{display:flex;gap:24px;flex-wrap:wrap;font-size:14px;color:rgba(255,255,255,.45)}
+.vt-prog-bar{height:3px;background:rgba(255,255,255,.08)}
+.vt-prog-fill{height:100%;background:#10B981;transition:width .08s linear;width:0%}
+.vt-dots{display:flex;justify-content:center;gap:6px;padding:14px}
+.vt-dot{width:7px;height:7px;border-radius:50%;background:rgba(255,255,255,.15);cursor:pointer;transition:background .2s}
+.vt-dot.on{background:#10B981}
+.vt-bottom{padding:12px 32px;border-top:1px solid rgba(255,255,255,.06);display:flex;justify-content:space-between;font-size:12px;color:rgba(255,255,255,.2)}
+
+/* ── MISC ── */
+.page-msg{display:flex;flex-direction:column;align-items:center;justify-content:center;min-height:60vh;text-align:center;padding:40px;gap:12px}
+.page-msg h2{font-size:22px;font-weight:800}
+.page-msg p{color:#6B7280}
+
+/* skeletons */
+.skel-card{background:#fff;border-radius:16px;border:1px solid #F0F0F0;overflow:hidden}
+.skel-img{height:140px;background:#F3F4F6;animation:skel 1.2s ease infinite alternate}
+.skel-line{height:12px;border-radius:6px;background:#F3F4F6;margin:10px 14px;animation:skel 1.2s ease infinite alternate}
+.skel-line.w70{width:70%}
+.skel-line.w50{width:50%}
+.skel-store{display:flex;align-items:center;gap:14px;padding:12px 16px;background:#fff;border-radius:14px;border:1px solid #F0F0F0}
+.skel-avatar{width:48px;height:48px;border-radius:50%;background:#F3F4F6;flex-shrink:0;animation:skel 1.2s ease infinite alternate}
+@keyframes skel{from{opacity:.6}to{opacity:1}}
+
+/* toasts */
+#toasts{position:fixed;bottom:24px;right:24px;z-index:999;display:flex;flex-direction:column;gap:8px}
+.toast{padding:12px 20px;border-radius:12px;font-size:14px;font-weight:600;opacity:0;transform:translateY(8px);transition:all .25s;pointer-events:none;max-width:320px}
+.toast.show{opacity:1;transform:none}
+.toast-ok{background:#10B981;color:#fff}
+.toast-err{background:#EF4444;color:#fff}
+
+/* responsive */
+@media(max-width:640px){
+  .nav{padding:10px 16px}.nav-links{display:none}
+  .home-hero{padding:60px 20px 40px}
+  .home-cats,.home-feed{padding:28px 16px}
+  .exp-wrap,.painel-wrap,.admin-wrap,.cad-wrap{padding:20px 16px}
+  .fg-row{grid-template-columns:1fr}
+  .cta-banner{flex-direction:column;text-align:center;padding:32px 20px}
+  .hero-btns{flex-direction:column;align-items:center}
+  .vt-main{padding:28px 20px}
+  .vts-nome{font-size:clamp(26px,8vw,40px)}
+}
+</style>
+</head>
+<body>
+<div id="root">
+  <div class="page-msg"><p style="color:#9CA3AF">Carregando...</p></div>
+</div>
+</body>
+</html>
