@@ -12,7 +12,7 @@
 ════════════════════════════════════════ -->
 <script type="module">
 import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-app.js";
-import { getAuth, signInWithPopup, GoogleAuthProvider, signOut, onAuthStateChanged }
+import { getAuth, signInWithPopup, signInWithRedirect, getRedirectResult, GoogleAuthProvider, signOut, onAuthStateChanged }
   from "https://www.gstatic.com/firebasejs/10.12.0/firebase-auth.js";
 import { getFirestore, collection, doc, addDoc, getDoc, getDocs, setDoc,
   updateDoc, deleteDoc, query, where, orderBy, onSnapshot, serverTimestamp, increment, limit }
@@ -34,6 +34,11 @@ const auth = getAuth(app);
 const db   = getFirestore(app);
 const provider = new GoogleAuthProvider();
 
+// Captura retorno do redirect de login
+getRedirectResult(auth).then(result => {
+  if (result?.user) render();
+}).catch(e => console.warn("redirect:", e.message));
+
 // ── ESTADO ────────────────────────────────────
 let currentUser   = null;
 let myLoja        = null;
@@ -41,7 +46,11 @@ let isAdmin       = false;
 let unsubPortal   = null;
 
 // ── AUTH ──────────────────────────────────────
-window.doLogin  = () => signInWithPopup(auth, provider).catch(e => toast(e.message,'err'));
+window.doLogin = async () => {
+  try {
+    await signInWithRedirect(auth, provider);
+  } catch(e) { toast(e.message,'err'); }
+};
 window.doLogout = async () => { await signOut(auth); go('home'); };
 
 onAuthStateChanged(auth, async u => {
