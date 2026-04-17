@@ -20,7 +20,7 @@ import { getFirestore, collection, doc, addDoc, getDoc, getDocs, setDoc,
 
 const firebaseConfig = {
   apiKey:            "AIzaSyA4T2wA4-XWrGWQCoXd1v_4qM6KeR_D5Wg",
-  authDomain:        "bairron-713ce.firebaseapp.com",
+  authDomain:        "gustavofilipe1707.github.io",
   projectId:         "bairron-713ce",
   storageBucket:     "bairron-713ce.firebasestorage.app",
   messagingSenderId: "1005754836387",
@@ -48,7 +48,7 @@ let unsubPortal   = null;
 // ── AUTH ──────────────────────────────────────
 window.doLogin = async () => {
   try {
-    await signInWithRedirect(auth, provider);
+    await signInWithPopup(auth, provider);
   } catch(e) { toast(e.message,'err'); }
 };
 window.doLogout = async () => { await signOut(auth); go('home'); };
